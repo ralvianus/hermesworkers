@@ -19,6 +19,8 @@ echo "ANTHROPIC_API_KEY set: ${ANTHROPIC_API_KEY:+yes}" >&2
 echo "OPENROUTER_API_KEY set: ${OPENROUTER_API_KEY:+yes}" >&2
 echo "OPENAI_API_KEY set: ${OPENAI_API_KEY:+yes}" >&2
 echo "HERMES_GATEWAY_TOKEN set: ${HERMES_GATEWAY_TOKEN:+yes}" >&2
+echo "TELEGRAM_BOT_TOKEN set: ${TELEGRAM_BOT_TOKEN:+yes}" >&2
+echo "AI Gateway mode: ${HERMES_AI_GATEWAY_URL:+enabled}" >&2
 echo "HOME: ${HOME:-/home/hermes}" >&2
 
 # Guard: do not start a duplicate gateway if the script is re-invoked while one is alive.
@@ -32,8 +34,16 @@ mkdir -p "$HOME_DIR/.hermes"
 
 # Configure the Hermes API server before launching the gateway.
 # We bind to 18789 (not Hermes' default 8642) so the Worker has a stable target port.
+# If HERMES_GATEWAY_TOKEN is unset (local dev without the Worker), generate a
+# random one instead of shipping a predictable default. It is printed to stderr
+# and the log so a local dev can pick it up; Worker-driven boots always set it.
+if [ -z "$HERMES_GATEWAY_TOKEN" ]; then
+    HERMES_GATEWAY_TOKEN="$(head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n')"
+    echo "WARNING: HERMES_GATEWAY_TOKEN not set — generated a random one-time token (see below). Worker requests without the matching secret will be rejected." >&2
+    echo "Generated HERMES_GATEWAY_TOKEN: $HERMES_GATEWAY_TOKEN" >&2
+fi
 hermes config set API_SERVER_ENABLED true
-hermes config set API_SERVER_KEY "${HERMES_GATEWAY_TOKEN:-change-me-local-dev}"
+hermes config set API_SERVER_KEY "$HERMES_GATEWAY_TOKEN"
 hermes config set API_SERVER_PORT 18789
 
 # Hermes reads provider keys + feature flags from ~/.hermes/.env, NOT system env vars.
@@ -42,9 +52,23 @@ hermes config set API_SERVER_PORT 18789
 HERMES_ENV_FILE="$HOME_DIR/.hermes/.env"
 : > "$HERMES_ENV_FILE"
 echo "GATEWAY_ALLOW_ALL_USERS=true" >> "$HERMES_ENV_FILE"
-{ [ -n "$ANTHROPIC_API_KEY" ] && echo "ANTHROPIC_API_KEY=$ANTHROPIC_API_KEY" >> "$HERMES_ENV_FILE"; } || true
-{ [ -n "$OPENROUTER_API_KEY" ] && echo "OPENROUTER_API_KEY=$OPENROUTER_API_KEY" >> "$HERMES_ENV_FILE"; } || true
-{ [ -n "$OPENAI_API_KEY" ] && echo "OPENAI_API_KEY=$OPENAI_API_KEY" >> "$HERMES_ENV_FILE"; } || true
+if [ -n "$HERMES_AI_GATEWAY_URL" ]; then
+    # AI Gateway mode: all inference goes through the gateway. Hermes' custom
+    # endpoint path takes its bearer from OPENAI_API_KEY, so the gateway token
+    # is materialised under that name. Direct provider keys are deliberately
+    # NOT written — the gateway owns upstream credentials.
+    { [ -n "$HERMES_INFERENCE_TOKEN" ] && echo "OPENAI_API_KEY=$HERMES_INFERENCE_TOKEN" >> "$HERMES_ENV_FILE"; } || true
+else
+    { [ -n "$ANTHROPIC_API_KEY" ] && echo "ANTHROPIC_API_KEY=$ANTHROPIC_API_KEY" >> "$HERMES_ENV_FILE"; } || true
+    { [ -n "$OPENROUTER_API_KEY" ] && echo "OPENROUTER_API_KEY=$OPENROUTER_API_KEY" >> "$HERMES_ENV_FILE"; } || true
+    { [ -n "$OPENAI_API_KEY" ] && echo "OPENAI_API_KEY=$OPENAI_API_KEY" >> "$HERMES_ENV_FILE"; } || true
+fi
+# Telegram platform: the bot comes online automatically when the token is
+# present. TELEGRAM_ALLOWED_USERS (comma-separated numeric user ids) gates
+# who can talk to the agent — leave it unset and anyone who finds the bot
+# can drive it (and spend your provider credits).
+{ [ -n "$TELEGRAM_BOT_TOKEN" ] && echo "TELEGRAM_BOT_TOKEN=$TELEGRAM_BOT_TOKEN" >> "$HERMES_ENV_FILE"; } || true
+{ [ -n "$TELEGRAM_ALLOWED_USERS" ] && echo "TELEGRAM_ALLOWED_USERS=$TELEGRAM_ALLOWED_USERS" >> "$HERMES_ENV_FILE"; } || true
 chmod 600 "$HERMES_ENV_FILE"
 echo "[startup] wrote $HERMES_ENV_FILE ($(wc -l < "$HERMES_ENV_FILE") lines)" >> "$LOG_FILE"
 
@@ -54,7 +78,22 @@ hermes config set API_SERVER_HOST 0.0.0.0 || hermes config set API_SERVER_BIND 0
 
 # Pin a default model so the API server can route requests when the caller does not specify one,
 # or when the supplied model is not pre-registered with Hermes. Override with HERMES_DEFAULT_MODEL.
-hermes config set model "${HERMES_DEFAULT_MODEL:-anthropic/claude-sonnet-4-5}" || true
+# In AI Gateway mode, route everything through the gateway as a custom endpoint:
+#   https://gateway.ai.cloudflare.com/v1/<acct>/<gw>/<provider>(/v1)  -> token = provider key (pass-through)
+#   https://api.cloudflare.com/client/v4/accounts/<acct>/ai/v1        -> token = Cloudflare API token
+# Model ids must match what the gateway's upstream expects. Workers AI models
+# (@cf/...) on the REST API additionally require the cf-aig-gateway-id header;
+# the OpenAI SDK reads it natively from OPENAI_CUSTOM_HEADERS, which covers
+# every client Hermes constructs (main agent + auxiliary tasks).
+if [ -n "$HERMES_AI_GATEWAY_URL" ]; then
+    hermes config set model.provider custom || true
+    hermes config set model.base_url "$HERMES_AI_GATEWAY_URL" || true
+    hermes config set model.api_mode chat_completions || true
+    hermes config set model.default "${HERMES_DEFAULT_MODEL:-@cf/zai-org/glm-5.3}" || true
+    export OPENAI_CUSTOM_HEADERS="cf-aig-gateway-id: ${HERMES_AI_GATEWAY_ID:-default}"
+else
+    hermes config set model "${HERMES_DEFAULT_MODEL:-anthropic/claude-sonnet-4-5}" || true
+fi
 
 # Launch the native Hermes dashboard (web UI on port 9119) in the background.
 # `--insecure` is required because Hermes refuses to bind 0.0.0.0 by default. This is safe in our

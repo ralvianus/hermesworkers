@@ -5,69 +5,83 @@ This guide walks through deploying `hermesworkers` to a fresh Cloudflare account
 ## Prerequisites
 
 - A Cloudflare account on the [Workers Paid plan](https://developers.cloudflare.com/workers/platform/pricing/) (Sandbox containers require it).
-- [`wrangler`](https://developers.cloudflare.com/workers/wrangler/install-and-update/) 3.95.0 or newer.
+- [`wrangler`](https://developers.cloudflare.com/workers/wrangler/install-and-update/) 4.0.0 or newer.
 - Docker Desktop (or compatible) running locally.
 - An API key for **at least one** of: Anthropic, OpenRouter, OpenAI.
 
 ## 1. Clone and install
 
 ```bash
-git clone https://github.com/PlaydaDev/hermesworkers.git
+git clone https://github.com/ralvianus/hermesworkers.git
 cd hermesworkers
 npm install
 ```
 
-## 2. Log into Cloudflare
+## 2. Create your local deployment config
+
+Deployments read from `wrangler.local.toml` (git-ignored); the committed `wrangler.toml` is just the template. Start from the template and pick a unique worker name:
+
+```bash
+cp wrangler.toml wrangler.local.toml
+$EDITOR wrangler.local.toml   # set `name`; optionally the dashboard routes/vars
+```
+
+## 3. Log into Cloudflare
 
 ```bash
 npx wrangler login
 npx wrangler whoami   # copy your Account ID
 ```
 
-## 3. Configure `wrangler.toml`
+## 4. Set your account ID (shell, not the repo)
 
-Open `wrangler.toml` and replace the two placeholders:
+No config file in this repo stores an `account_id`. Export it once in your shell profile instead:
 
-```toml
-name = "hermesworkers-yourname"    # any unique name in your account
-account_id = "abcdef0123456789..."  # from `wrangler whoami`
+```bash
+export CLOUDFLARE_ACCOUNT_ID="abcdef0123456789..."   # add to ~/.zshrc / ~/.bashrc
 ```
 
-Leave the rest as is for now (you can wire a custom dashboard hostname later — see [custom-domain.md](custom-domain.md)).
+## 5. (Local dev) Create `.dev.vars`
 
-## 4. Push your provider API key(s)
+If you plan to run `npm run dev` locally, copy the secrets template and fill in values:
+
+```bash
+cp .dev.vars.example .dev.vars
+```
+
+## 6. Push your provider API key(s)
 
 You need **at least one** of these. Add more later if you want to mix providers.
 
 ```bash
 # Pick one (or several)
-npx wrangler secret put ANTHROPIC_API_KEY
-npx wrangler secret put OPENROUTER_API_KEY
-npx wrangler secret put OPENAI_API_KEY
+npm run secret -- put ANTHROPIC_API_KEY
+npm run secret -- put OPENROUTER_API_KEY
+npm run secret -- put OPENAI_API_KEY
 ```
 
 Wrangler prompts you for each value; nothing is written to disk locally.
 
-## 5. (Recommended) Push a Worker bearer token
+## 7. (Recommended) Push a Worker bearer token
 
 Without an `API_TOKEN`, anyone who finds your `*.workers.dev` URL can use your provider key on your dime. Generate a random token and add it:
 
 ```bash
-openssl rand -hex 32 | npx wrangler secret put API_TOKEN
+openssl rand -hex 32 | npm run secret -- put API_TOKEN
 ```
 
-If your shell can't pipe into `wrangler secret put`, just run it interactively:
+If your shell can't pipe into the script, just run it interactively:
 
 ```bash
-openssl rand -hex 32     # copy the output
-npx wrangler secret put API_TOKEN   # paste when prompted
+openssl rand -hex 32            # copy the output
+npm run secret -- put API_TOKEN   # paste when prompted
 ```
 
-## 6. Deploy
+## 8. Deploy
 
 ```bash
 # Docker Desktop must be running — Cloudflare builds the container image locally.
-npx wrangler deploy
+npm run deploy
 ```
 
 The first deploy takes a few minutes while the Hermes image builds (~3 GB of Python deps). Subsequent deploys reuse layers and finish in seconds.
@@ -79,7 +93,7 @@ Deployed hermesworkers-yourname triggers (X.XX sec)
   https://hermesworkers-yourname.<your-subdomain>.workers.dev
 ```
 
-## 7. Smoke test
+## 9. Smoke test
 
 ```bash
 WORKER_URL=https://hermesworkers-yourname.<your-subdomain>.workers.dev
@@ -101,7 +115,7 @@ curl -N "$WORKER_URL/v1/chat/completions" \
 
 You should get back an SSE stream of `data: {...}` chunks, with the final `data: [DONE]` marking the end of the response.
 
-## 8. (Optional) Wake the container ahead of time
+## 10. (Optional) Wake the container ahead of time
 
 If you know a chat is coming and want to skip the cold-start wait, fire a wake call first:
 

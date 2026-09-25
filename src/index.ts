@@ -1,5 +1,6 @@
 import { Hono } from 'hono';
 import type { Env } from './lib/container';
+import { bearerFromHeader, timingSafeEqualStr } from './lib/auth';
 import { chat } from './routes/chat';
 import { instance } from './routes/instance';
 import { maybeHandleDashboard } from './services/dashboard-proxy';
@@ -29,7 +30,7 @@ app.get('/', (c) =>
       stop: 'POST /api/instance/stop',
       logs: 'GET /api/instance/logs',
     },
-    docs: 'https://github.com/PlaydaDev/hermesworkers',
+    docs: 'https://github.com/ralvianus/hermesworkers',
   }),
 );
 
@@ -48,11 +49,14 @@ async function requireToken(c: any, next: any) {
   const expected = c.env.API_TOKEN;
   if (!expected) {
     // No token configured — open Worker (single-machine / private deployment).
+    // Warn loudly: every endpoint below is reachable by anyone with the URL.
+    console.warn(
+      '[auth] API_TOKEN is not set — all /api/* and /v1/* endpoints are PUBLIC.',
+    );
     return next();
   }
-  const header = c.req.header('authorization') || '';
-  const bearer = header.startsWith('Bearer ') ? header.slice(7).trim() : '';
-  if (bearer !== expected) {
+  const bearer = bearerFromHeader(c.req.header('authorization'));
+  if (!bearer || !(await timingSafeEqualStr(bearer, expected))) {
     return c.json({ error: 'unauthorized' }, 401);
   }
   return next();

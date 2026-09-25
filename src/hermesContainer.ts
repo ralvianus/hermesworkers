@@ -19,7 +19,7 @@ export class HermesInstance extends Sandbox {
   sleepAfter = '4h';
 
   constructor(ctx: DurableObjectState, env: unknown) {
-    super(ctx, env as any);
+    super(ctx as any, env as any);
     // No baseline env required here — keys are injected at process start.
   }
 }

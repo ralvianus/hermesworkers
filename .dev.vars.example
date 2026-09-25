@@ -1,0 +1,49 @@
+# hermesworkers — local development secrets template.
+#
+# Copy to `.dev.vars` (git-ignored) and fill in real values for `wrangler dev`:
+#   cp .dev.vars.example .dev.vars
+#
+# Values here are only used for LOCAL development (`npm run dev`). For
+# production, push each secret with `npm run secret -- put <NAME>`.
+
+# ── Provider keys (at least one required) ────────────────────────────
+ANTHROPIC_API_KEY=""
+OPENROUTER_API_KEY=""
+OPENAI_API_KEY=""
+
+# ── Worker auth (strongly recommended) ──────────────────────────────
+# Bearer token required on /v1/* and /api/* when set.
+# Generate: openssl rand -hex 32
+API_TOKEN=""
+
+# Bearer token between the Worker and the Hermes API server inside the
+# container. Generate: openssl rand -hex 32
+HERMES_GATEWAY_TOKEN=""
+
+# ── Optional config ──────────────────────────────────────────────────
+# Default model id, e.g. "anthropic/claude-sonnet-4-5"
+# HERMES_DEFAULT_MODEL=""
+
+# Hostname proxied to the Hermes native dashboard (see docs/custom-domain.md)
+# DASHBOARD_HOSTNAME=""
+
+# ── Cloudflare AI Gateway mode (optional) ───────────────────────────
+# When HERMES_AI_GATEWAY_URL is set, all inference routes through the
+# gateway and direct provider keys above are ignored.
+# Pass-through (keep your provider key, e.g. free OpenRouter models):
+#   HERMES_AI_GATEWAY_URL="https://gateway.ai.cloudflare.com/v1/<account_id>/<gateway_id>/openrouter/v1"
+#   HERMES_INFERENCE_TOKEN="<your OpenRouter key>"
+# REST API / Unified Billing (Cloudflare API token, catalog models):
+#   HERMES_AI_GATEWAY_URL="https://api.cloudflare.com/client/v4/accounts/<account_id>/ai/v1"
+#   HERMES_INFERENCE_TOKEN="<Cloudflare API token with Workers AI Read>"
+# Workers AI models (@cf/...) additionally require the gateway id:
+#   HERMES_AI_GATEWAY_ID="<gateway id from the dashboard>" (defaults to "default")
+# HERMES_AI_GATEWAY_URL=""
+# HERMES_INFERENCE_TOKEN=""
+# HERMES_AI_GATEWAY_ID=""
+
+# ── Telegram platform (optional) ─────────────────────────────────────
+# Bot comes online at gateway boot when the token is set.
+# TELEGRAM_BOT_TOKEN=""
+# Comma-separated numeric Telegram user ids allowed to talk to the bot.
+# TELEGRAM_ALLOWED_USERS=""

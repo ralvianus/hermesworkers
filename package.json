@@ -6,9 +6,10 @@
   "type": "module",
   "license": "Apache-2.0",
   "scripts": {
-    "dev": "wrangler dev",
-    "deploy": "wrangler deploy",
-    "tail": "wrangler tail",
+    "dev": "wrangler dev -c wrangler.local.toml",
+    "deploy": "wrangler deploy -c wrangler.local.toml",
+    "tail": "wrangler tail -c wrangler.local.toml",
+    "secret": "wrangler secret -c wrangler.local.toml",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
@@ -16,8 +17,8 @@
     "hono": "^4.6.0"
   },
   "devDependencies": {
-    "@cloudflare/workers-types": "^4.20250503.0",
+    "@cloudflare/workers-types": "^5.20260923.1",
     "typescript": "^5.6.0",
-    "wrangler": "^3.95.0"
+    "wrangler": "^4.139.0"
   }
 }

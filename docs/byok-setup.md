@@ -15,7 +15,7 @@ You only need a key for the provider(s) whose models you want to call. Hermes ro
 ## Push the secret
 
 ```bash
-npx wrangler secret put ANTHROPIC_API_KEY     # repeat for OPENROUTER_API_KEY / OPENAI_API_KEY
+npm run secret -- put ANTHROPIC_API_KEY     # repeat for OPENROUTER_API_KEY / OPENAI_API_KEY
 ```
 
 Wrangler asks for the value on the command line. The secret is stored encrypted on Cloudflare and only readable by your Worker at runtime.
@@ -38,7 +38,7 @@ The secret never lands in:
 ## Rotating a key
 
 ```bash
-npx wrangler secret put ANTHROPIC_API_KEY     # paste the new value
+npm run secret -- put ANTHROPIC_API_KEY     # paste the new value
 curl -X POST "$WORKER_URL/api/instance/restart-gateway" \
   -H "Authorization: Bearer $API_TOKEN"
 ```
@@ -50,12 +50,12 @@ curl -X POST "$WORKER_URL/api/instance/restart-gateway" \
 If a caller hits `/v1/chat/completions` without specifying a `model`, Hermes falls back to its default. Override it via:
 
 ```bash
-# Plain env var in wrangler.toml [vars] section
+# Plain env var in wrangler.local.toml [vars] section
 [vars]
 HERMES_DEFAULT_MODEL = "anthropic/claude-sonnet-4-5"
 
 # Or push as a secret if you'd rather not commit the value
-npx wrangler secret put HERMES_DEFAULT_MODEL
+npm run secret -- put HERMES_DEFAULT_MODEL
 ```
 
 Common choices:
@@ -75,13 +75,22 @@ The "HERMES STATUS" section should show `✓` next to each provider whose key yo
 
 ## Using Cloudflare AI Gateway (optional)
 
-Cloudflare AI Gateway can sit between Hermes and the upstream provider, giving you logging, caching and unified billing. To enable it, override the Hermes endpoint URLs in a forked `start-hermes.sh`:
+Cloudflare AI Gateway can sit between Hermes and the upstream provider, giving you logging, caching, analytics, rate limiting and guardrails. Push two secrets and every inference call (chat and the agent's auxiliary tasks) routes through it — no script changes needed:
 
 ```bash
-hermes config set ANTHROPIC_BASE_URL "https://gateway.ai.cloudflare.com/v1/<account-id>/<gateway-id>/anthropic"
-hermes config set OPENAI_BASE_URL    "https://gateway.ai.cloudflare.com/v1/<account-id>/<gateway-id>/openai"
+npm run secret -- put HERMES_AI_GATEWAY_URL
+npm run secret -- put HERMES_INFERENCE_TOKEN
 ```
 
-You still need a valid provider key — AI Gateway forwards your credentials upstream and bills you the same way the provider would, plus the gateway's small fee.
+Two supported shapes:
 
-See the [Cloudflare AI Gateway docs](https://developers.cloudflare.com/ai-gateway/) for details.
+| Mode | `HERMES_AI_GATEWAY_URL` | `HERMES_INFERENCE_TOKEN` | Notes |
+| ---- | ----------------------- | ------------------------ | ----- |
+| Pass-through | `https://gateway.ai.cloudflare.com/v1/<account_id>/<gateway_id>/openrouter/v1` | your OpenRouter key | Keeps free models and OpenRouter's own rate limits; the key passes through the gateway. |
+| REST API / Unified Billing | `https://api.cloudflare.com/client/v4/accounts/<account_id>/ai/v1` | Cloudflare API token (**Account → Workers AI → Read**) | Catalog models (`openai/gpt-4.1`, `anthropic/claude-sonnet-4-5`, …) billed through Cloudflare; no OpenRouter caps. Load credits first. |
+
+Model ids in `HERMES_DEFAULT_MODEL` must match what the gateway's upstream expects: OpenRouter ids in pass-through mode, `author/model` catalog ids in REST API mode, and `@cf/author/model` for Workers AI models. **Workers AI (`@cf/...`) models require the `cf-aig-gateway-id` header** — push the gateway id via `HERMES_AI_GATEWAY_ID` (falls back to `default`); the startup script exports it through the OpenAI SDK's native `OPENAI_CUSTOM_HEADERS` support, which covers every client Hermes constructs.
+
+Redeploy or call `POST /api/instance/restart-gateway` after changing either secret. Requests can also target a specific gateway with the `cf-aig-gateway-id` header — with Hermes, encode the gateway id in the URL instead.
+
+See the [Cloudflare AI Gateway docs](https://developers.cloudflare.com/ai-gateway/) for gateway configuration (caching, rate limiting, guardrails, BYOK key storage).

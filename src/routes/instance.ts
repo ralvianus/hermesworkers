@@ -132,8 +132,8 @@ instance.get('/api/instance/logs', async (c) => {
     return c.json({
       ok: true,
       exitCode: result?.exitCode ?? null,
-      stdout: result?.stdout ?? '',
-      stderr: result?.stderr ?? '',
+      stdout: redactSecrets(result?.stdout ?? ''),
+      stderr: redactSecrets(result?.stderr ?? ''),
     });
   } catch (err) {
     return c.json(
@@ -145,5 +145,18 @@ instance.get('/api/instance/logs', async (c) => {
     );
   }
 });
+
+/**
+ * Redacts values of secret-looking keys (`API_SERVER_KEY`, `*_TOKEN`,
+ * `*_API_KEY`, `*_SECRET`, ...) from raw command output. The container-side
+ * sed only covers `~/.hermes/.env`; this pass also catches `hermes config
+ * show`, `hermes status` and log lines.
+ */
+const SECRET_KEY_RE =
+  /((?:[A-Za-z0-9_]*)(?:API_KEY|SERVER_KEY|TOKEN|SECRET|PASSWORD)[A-Za-z0-9_]*)\s*[=:]\s*\S+/g;
+
+function redactSecrets(output: string): string {
+  return output.replace(SECRET_KEY_RE, '$1=<redacted>');
+}
 
 export { instance };

@@ -30,23 +30,23 @@ In the Cloudflare dashboard for the zone:
 
 ## 3. Tell the Worker about the hostname
 
-Edit `wrangler.toml`:
+Edit `wrangler.local.toml` (your git-ignored deployment config):
 
 ```toml
 [vars]
 DASHBOARD_HOSTNAME = "hermes.example.com"
 
 routes = [
-  { pattern = "hermes.example.com/*", custom_domain = true }
+  { pattern = "hermes.example.com", custom_domain = true }
 ]
 ```
 
-`custom_domain = true` tells Cloudflare to auto-provision the hostname as a Worker Custom Domain (SSL handled for you).
+`custom_domain = true` tells Cloudflare to auto-provision the hostname as a Worker Custom Domain (SSL handled for you). Note the pattern is the bare hostname — Custom Domains do not accept a `/*` path wildcard.
 
 ## 4. Redeploy
 
 ```bash
-npx wrangler deploy
+npm run deploy
 ```
 
 ## 5. Verify
@@ -58,13 +58,26 @@ curl -I https://hermes.example.com/ \
 
 You should get back the Hermes dashboard HTML (HTTP 200, `content-type: text/html`). Visiting the URL in a browser shows the dashboard with the sidebar (Sessions, Analytics, Models, Cron, Skills, etc.).
 
-If `API_TOKEN` is set, the dashboard hostname requires the same token. You can either:
+If `API_TOKEN` is set, the dashboard hostname requires a credential. Three are accepted:
 
-- pass it as a `Authorization: Bearer <token>` header (works for curl / API clients), or
-- set a `hw_token` cookie (works for browser tabs):
-  ```bash
-  document.cookie = `hw_token=${encodeURIComponent('<your token>')}; path=/; secure; samesite=strict`;
-  ```
+- **Zero Trust SSO (recommended):** if the hostname is fronted by a Cloudflare Access application, set `ACCESS_TEAM_DOMAIN` and `ACCESS_AUD` in `wrangler.local.toml` `[vars]`. The Worker validates the `Cf-Access-Jwt-Assertion` the edge injects after SSO — the browser flow is simply: open the URL, authenticate to Access, done. Nothing to paste or save.
+- **Login page (fallback):** open `https://hermes.example.com/dashboard-login`, paste the token, and sign in. This sets an `HttpOnly` `hw_token` cookie (30 days) and redirects to the dashboard. Browsers that fail the gate are redirected here automatically.
+- **Header:** send `Authorization: Bearer <token>` (curl / API clients).
+
+### Enabling the Zero Trust path
+
+1. Ensure an Access application covers the hostname (Zero Trust → Access controls → Applications).
+2. Copy the application's **AUD tag** (Configure → Additional settings).
+3. Add to `wrangler.local.toml`:
+   ```toml
+   [vars]
+   ACCESS_TEAM_DOMAIN = "<your-team>.cloudflareaccess.com"
+   ACCESS_AUD = "<application AUD tag>"
+   ```
+4. Redeploy. The Worker fetches the team's public keys from
+   `https://<team>.cloudflareaccess.com/cdn-cgi/access/certs` and verifies
+   each request's JWT (signature, issuer, audience, expiry) — key rotation
+   is handled by re-fetching the JWKS on an unknown `kid`.
 
 ## Common issues
 

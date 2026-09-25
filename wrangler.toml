@@ -1,19 +1,36 @@
-# hermesworkers — Cloudflare Workers configuration template.
+# hermesworkers — Cloudflare Workers configuration TEMPLATE.
 #
-# Replace the placeholders below before your first `wrangler deploy`:
-#   - <YOUR_WORKER_NAME>             unique Worker name in your account
-#   - <YOUR_ACCOUNT_ID>              from `wrangler whoami` or the Cloudflare dashboard
+# This file is committed as the shared example. Actual deployments use a copy
+# named `wrangler.local.toml` (git-ignored) — that is the file `npm run deploy`
+# ships. Start by copying:
 #
-# Optional placeholders for the custom-domain mode (see docs/custom-domain.md):
-#   - <YOUR_DASHBOARD_HOSTNAME>      e.g. hermes.example.com (Worker Route)
+#   cp wrangler.toml wrangler.local.toml
+#
+# …then edit the deployment-specific values in your copy: worker `name`,
+# dashboard `routes`, and the `[vars]` section. Keep structural changes
+# (bindings, migrations, containers) in sync between the two files — wrangler
+# has no config inheritance.
+#
+# The account ID is intentionally NOT stored in either file. Wrangler reads it
+# from the CLOUDFLARE_ACCOUNT_ID environment variable (or `npx wrangler whoami`
+# when logged in). Put it in your shell profile:
+#   export CLOUDFLARE_ACCOUNT_ID="<your account id>"
 
-name = "<YOUR_WORKER_NAME>"
+name = "hermes-worker"
 main = "src/index.ts"
 compatibility_date = "2026-05-01"
 compatibility_flags = ["nodejs_compat"]
-account_id = "<YOUR_ACCOUNT_ID>"
 
-# Allow the Worker to receive WebSocket upgrades (Hermes dashboard live updates).
+# ─── Optional: Worker Custom Domain for the dashboard ───────────────
+# Cloudflare auto-provisions DNS + SSL for this hostname on deploy; the zone
+# must live in the same Cloudflare account. Custom Domains do not accept a
+# `/*` path wildcard. Keep the workers.dev URL reachable with workers_dev.
+#
+# routes = [
+#   { pattern = "hermes.example.com", custom_domain = true }
+# ]
+workers_dev = true
+
 [observability]
 enabled = true
 
@@ -33,14 +50,21 @@ image = "./container/Dockerfile"
 max_instances = 1
 instance_type = "standard-1"
 
-# ─── Optional: Worker Route for the dashboard subdomain ─────────────
-# Uncomment and edit if you wire a custom domain (see docs/custom-domain.md).
-# routes = [
-#   { pattern = "<YOUR_DASHBOARD_HOSTNAME>/*", custom_domain = true }
-# ]
+# ─── Optional vars (deployment-specific; put real values in wrangler.local.toml) ───
+[vars]
+# Hostname whose traffic is proxied to the Hermes native dashboard (port 9119).
+# DASHBOARD_HOSTNAME = "hermes.example.com"
+# Zero Trust (optional): team domain and AUD tag of the Access application in
+# front of DASHBOARD_HOSTNAME. A valid Cf-Access-Jwt-Assertion from that
+# application is accepted as the dashboard credential (SSO replaces the shared
+# token). AUD tag: Zero Trust -> Access controls -> Applications -> <app> ->
+# Additional settings.
+# ACCESS_TEAM_DOMAIN = "<your-team>.cloudflareaccess.com"
+# ACCESS_AUD = "<application AUD tag>"
 
-# ─── Required secrets (set with `wrangler secret put <NAME>`) ──────
-# At least one of the three provider keys is required:
+# ─── Secrets (set with `npm run secret -- put <NAME>`) ──────────────
+# Values never live in this file or in git — they are stored encrypted on
+# Cloudflare. Direct-provider mode requires at least one provider key:
 #   ANTHROPIC_API_KEY    Anthropic Claude access
 #   OPENROUTER_API_KEY   OpenRouter (multi-provider routing)
 #   OPENAI_API_KEY       OpenAI (GPT models)
@@ -48,4 +72,15 @@ instance_type = "standard-1"
 # Optional:
 #   API_TOKEN            Bearer token required on /api/* requests (recommended in production).
 #                        Generate one with: `openssl rand -hex 32`
+#   HERMES_GATEWAY_TOKEN Bearer token between the Worker and the Hermes API server
 #   HERMES_DEFAULT_MODEL Override Hermes' default model id, e.g. `anthropic/claude-sonnet-4-5`
+#   TELEGRAM_BOT_TOKEN   Enables the Telegram platform (bot comes online at boot).
+#   TELEGRAM_ALLOWED_USERS  Comma-separated Telegram user ids allowed to use the bot.
+#                        Strongly recommended — unset means anyone who finds the bot can use it.
+#   HERMES_AI_GATEWAY_URL   AI Gateway mode: route all inference through this base URL, e.g.
+#                        https://gateway.ai.cloudflare.com/v1/<account>/<gateway>/openrouter/v1
+#                        or https://api.cloudflare.com/client/v4/accounts/<account>/ai/v1
+#   HERMES_INFERENCE_TOKEN  Bearer token Hermes sends to the gateway (provider key for
+#                        pass-through, Cloudflare API token for the /ai/v1 REST API).
+#   HERMES_AI_GATEWAY_ID   Gateway id sent as cf-aig-gateway-id — required for
+#                        Workers AI (@cf/...) models on the REST API (falls back to "default").
