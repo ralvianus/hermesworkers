@@ -1,0 +1,63 @@
+# Deploys hermes-workers to Cloudflare on every push to main.
+#
+# The real deployment config (wrangler.local.toml) is git-ignored — CI
+# materialises it from the WRANGLER_LOCAL_TOML repo secret right before
+# deploy. Worker secrets (API_TOKEN, provider keys, R2 keys, ...) are never
+# touched: they live on the deployed Worker and persist across deploys.
+#
+# Required repo secrets (Settings → Secrets and variables → Actions):
+#   CLOUDFLARE_API_TOKEN  — Cloudflare API token: Workers Scripts:Edit,
+#                          User Details:Read, Account Settings:Read
+#   CLOUDFLARE_ACCOUNT_ID — the account the Worker deploys into
+#   WRANGLER_LOCAL_TOML   — full contents of the local wrangler.local.toml
+#
+# Deploy cadence notes:
+#   - Worker-only changes deploy in seconds and do not touch the container.
+#   - Pushes that change the Dockerfile/container build the image in CI
+#     (~5-8 min cold) and trigger an instance rollout (~10-25 min); the R2
+#     restore path recovers state on the fresh instance automatically.
+#   - Feature branches do not deploy — merge to main to ship.
+
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  # Never let two deploys race; queue instead of cancelling an in-flight one.
+  group: deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Deploy to Cloudflare
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Materialize deployment config
+        # Written from an env var (not inline interpolation) so a malicious
+        # secret value can never inject shell syntax into this step.
+        env:
+          WRANGLER_LOCAL_TOML: ${{ secrets.WRANGLER_LOCAL_TOML }}
+        run: printf '%s\n' "$WRANGLER_LOCAL_TOML" > wrangler.local.toml
+
+      - name: Deploy
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: npm run deploy

@@ -237,6 +237,25 @@ npm run deploy
 curl -X POST "$WORKER_URL/api/instance/backup" -H "Authorization: Bearer $TOKEN"
 ```
 
+## Continuous deployment (optional, GitHub Actions)
+
+Pushing to `main` can deploy automatically via the included workflow ([`.github/workflows/deploy.yml`](.github/workflows/deploy.yml)): checkout → `npm ci` → typecheck → materialise `wrangler.local.toml` from a secret → `npm run deploy`.
+
+Setup (one-time):
+
+1. Create a Cloudflare API token (**dashboard → My Profile → API Tokens → Custom token**) with **Workers Scripts:Edit**, **User Details:Read**, **Account Settings:Read**, scoped to your account.
+2. Add three repo secrets under **Settings → Secrets and variables → Actions**:
+   - `CLOUDFLARE_API_TOKEN` — the token from step 1
+   - `CLOUDFLARE_ACCOUNT_ID` — the account the Worker deploys into
+   - `WRANGLER_LOCAL_TOML` — the **full contents of your local `wrangler.local.toml`** (the file is git-ignored, so CI needs it delivered as a secret)
+3. Push to `main` — the workflow deploys and the Actions tab shows the run.
+
+Notes:
+
+- **Worker secrets are never in CI.** `API_TOKEN`, provider keys, `R2_ACCESS_KEY_ID`, etc. live on the deployed Worker and persist across every deploy.
+- Worker-only commits deploy in seconds; commits that change the Dockerfile/container build the image in CI (~5–8 min cold) and trigger an instance rollout (~10–25 min). With R2 durability enabled, state recovery on the fresh instance is automatic.
+- Feature branches do not deploy; merge to `main` to ship. Manual deploys are possible from the Actions tab (`workflow_dispatch`).
+
 ## All secrets reference
 
 | Name                       | Required | Purpose                                                                                   |
