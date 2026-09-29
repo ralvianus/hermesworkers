@@ -253,7 +253,7 @@ Setup (one-time):
 Notes:
 
 - **Worker secrets are never in CI.** `API_TOKEN`, provider keys, `R2_ACCESS_KEY_ID`, etc. live on the deployed Worker and persist across every deploy.
-- Worker-only commits deploy in seconds; commits that change the Dockerfile/container build the image in CI (~5–8 min cold) and trigger an instance rollout (~10–25 min). With R2 durability enabled, state recovery on the fresh instance is automatic.
+- **Every deploy rolls the container.** Docker builds are not reproducible — each deploy produces a fresh image digest, which triggers an instance rollout (~10–25 min) after the ~2 min CI build. With R2 durability enabled, state recovery on the fresh instance is automatic.
 - Feature branches do not deploy; merge to `main` to ship. Manual deploys are possible from the Actions tab (`workflow_dispatch`).
 
 ## All secrets reference

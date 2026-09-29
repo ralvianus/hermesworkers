@@ -12,9 +12,9 @@
 #   WRANGLER_LOCAL_TOML   — full contents of the local wrangler.local.toml
 #
 # Deploy cadence notes:
-#   - Worker-only changes deploy in seconds and do not touch the container.
-#   - Pushes that change the Dockerfile/container build the image in CI
-#     (~5-8 min cold) and trigger an instance rollout (~10-25 min); the R2
+#   - The GitHub-hosted runner builds the container image in ~2 min. Docker
+#     builds are not reproducible (fresh digest each time), so every deploy
+#     triggers an instance rollout (~10-25 min drain + provisioning); the R2
 #     restore path recovers state on the fresh instance automatically.
 #   - Feature branches do not deploy — merge to main to ship.
 
