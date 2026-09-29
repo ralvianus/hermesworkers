@@ -1,15 +1,22 @@
+# PR typecheck gate. Pushes to main are deployed (and typechecked) by
+# deploy.yml — this workflow only runs on pull requests so main pushes do
+# not run duplicate jobs.
+#
+# Note: do not add docker build/smoke-test jobs back here — the sandbox
+# base image's entrypoint runs a persistent server and never exits, so
+# `docker run <image> <cmd>` hangs forever (verified the hard way). The
+# deploy workflow builds the image for real on every push to main.
+
 name: CI
 
 on:
-  push:
-    branches: [main]
   pull_request:
-    branches: [main]
 
 jobs:
   typecheck:
     name: Type check Worker
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -18,25 +25,3 @@ jobs:
           cache: 'npm'
       - run: npm ci
       - run: npm run typecheck
-
-  docker:
-    name: Build container image
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-      - name: Build Hermes Sandbox image
-        uses: docker/build-push-action@v6
-        with:
-          context: ./container
-          file: ./container/Dockerfile
-          push: false
-          load: true
-          tags: hermesworkers:ci
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-      - name: Smoke check
-        run: |
-          docker run --rm hermesworkers:ci /usr/local/bin/hermes --version
-          docker run --rm hermesworkers:ci /usr/local/bin/hermes dashboard --help > /dev/null
