@@ -9,8 +9,9 @@ export { HermesInstance } from './hermesContainer';
 
 const app = new Hono<{ Bindings: Env }>();
 
-// Optional bearer-token gate on every /api/* and /v1/* request.
-// If API_TOKEN is left unset (single-machine dev), the Worker is open.
+// Bearer-token gate on every /api/* and /v1/* request. Fails closed: with
+// API_TOKEN unset, requests are rejected with 503 unless the deployment
+// explicitly opts in with ALLOW_UNAUTHENTICATED=true (local dev only).
 app.use('/v1/*', requireToken);
 app.use('/api/*', requireToken);
 
@@ -28,6 +29,7 @@ app.get('/', (c) =>
       restart: 'POST /api/instance/restart',
       restartGateway: 'POST /api/instance/restart-gateway',
       stop: 'POST /api/instance/stop',
+      backup: 'POST /api/instance/backup',
       logs: 'GET /api/instance/logs',
     },
     docs: 'https://github.com/ralvianus/hermesworkers',
@@ -48,10 +50,23 @@ export default {
 async function requireToken(c: any, next: any) {
   const expected = c.env.API_TOKEN;
   if (!expected) {
-    // No token configured — open Worker (single-machine / private deployment).
-    // Warn loudly: every endpoint below is reachable by anyone with the URL.
+    // Fail closed: with no credential configured the Worker must not serve
+    // traffic. Opt back in explicitly (local dev only) via the var.
+    if (c.env.ALLOW_UNAUTHENTICATED !== 'true') {
+      console.error(
+        '[auth] rejected request: API_TOKEN is not set. Set it with `npm run secret -- put API_TOKEN`.',
+      );
+      return c.json(
+        {
+          error: 'api_token_not_set',
+          message:
+            'API_TOKEN is not configured — all /api/* and /v1/* endpoints are disabled. Set it with `npm run secret -- put API_TOKEN`.',
+        },
+        503,
+      );
+    }
     console.warn(
-      '[auth] API_TOKEN is not set — all /api/* and /v1/* endpoints are PUBLIC.',
+      '[auth] API_TOKEN is not set and ALLOW_UNAUTHENTICATED=true — all /api/* and /v1/* endpoints are PUBLIC.',
     );
     return next();
   }

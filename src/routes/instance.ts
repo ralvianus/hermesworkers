@@ -2,6 +2,7 @@ import { Hono } from 'hono';
 import {
   getContainer,
   collectProviderKeys,
+  collectR2Durability,
   type Env,
 } from '../lib/container';
 import {
@@ -9,7 +10,9 @@ import {
   getGatewayStatus,
   killGateway,
   restartGateway,
+  runBackup,
 } from '../services/container-lifecycle';
+import { redactSecrets } from '../lib/redact';
 
 const instance = new Hono<{ Bindings: Env }>();
 
@@ -39,6 +42,7 @@ instance.post('/api/instance/wake', async (c) => {
       providerKeys: collectProviderKeys(c.env),
       gatewayToken: c.env.HERMES_GATEWAY_TOKEN,
       defaultModel: c.env.HERMES_DEFAULT_MODEL,
+      r2: collectR2Durability(c.env),
     });
     return c.json({ ok: true, status: 'ready' });
   } catch (err) {
@@ -81,6 +85,7 @@ instance.post('/api/instance/restart-gateway', async (c) => {
       providerKeys: collectProviderKeys(c.env),
       gatewayToken: c.env.HERMES_GATEWAY_TOKEN,
       defaultModel: c.env.HERMES_DEFAULT_MODEL,
+      r2: collectR2Durability(c.env),
     });
     return c.json({ ok: true, status: 'ready' });
   } catch (err) {
@@ -102,6 +107,34 @@ instance.post('/api/instance/stop', async (c) => {
   const container = getContainer(c.env);
   await killGateway(container);
   return c.json({ ok: true, status: 'stopped' });
+});
+
+/**
+ * Force an immediate ~/.hermes snapshot into the R2 bucket's backups/
+ * prefix (skips the post-chat debounce). Requires R2 durability to be
+ * configured.
+ */
+instance.post('/api/instance/backup', async (c) => {
+  const container = getContainer(c.env);
+  const r2 = collectR2Durability(c.env);
+  if (!r2) {
+    return c.json(
+      { ok: false, error: 'r2_durability_not_configured' },
+      400,
+    );
+  }
+  try {
+    const result = await runBackup(container, r2, { force: true });
+    return c.json({ ok: true, ...result });
+  } catch (err) {
+    return c.json(
+      {
+        ok: false,
+        error: redactSecrets(err instanceof Error ? err.message : String(err)),
+      },
+      500,
+    );
+  }
 });
 
 /**
@@ -145,18 +178,5 @@ instance.get('/api/instance/logs', async (c) => {
     );
   }
 });
-
-/**
- * Redacts values of secret-looking keys (`API_SERVER_KEY`, `*_TOKEN`,
- * `*_API_KEY`, `*_SECRET`, ...) from raw command output. The container-side
- * sed only covers `~/.hermes/.env`; this pass also catches `hermes config
- * show`, `hermes status` and log lines.
- */
-const SECRET_KEY_RE =
-  /((?:[A-Za-z0-9_]*)(?:API_KEY|SERVER_KEY|TOKEN|SECRET|PASSWORD)[A-Za-z0-9_]*)\s*[=:]\s*\S+/g;
-
-function redactSecrets(output: string): string {
-  return output.replace(SECRET_KEY_RE, '$1=<redacted>');
-}
 
 export { instance };

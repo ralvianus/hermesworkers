@@ -50,6 +50,16 @@ image = "./container/Dockerfile"
 max_instances = 1
 instance_type = "standard-1"
 
+# ─── R2 state durability (optional; see docs/plans/r2-durability-plan.md) ──
+# When configured, Hermes' memory files are s3fs-mounted from the bucket and
+# ~/.hermes is periodically backed up into it (backups/ prefix). Enable by
+# setting HERMES_R2_ENDPOINT + BACKUP_BUCKET_NAME + CLOUDFLARE_ACCOUNT_ID in
+# [vars] and the R2_ACCESS_KEY_ID / R2_SECRET_ACCESS_KEY secrets. The binding
+# name BACKUP_BUCKET is required by the Sandbox SDK's backup API.
+# [[r2_buckets]]
+# binding = "BACKUP_BUCKET"
+# bucket_name = "hermes-data"
+
 # ─── Optional vars (deployment-specific; put real values in wrangler.local.toml) ───
 [vars]
 # Hostname whose traffic is proxied to the Hermes native dashboard (port 9119).
@@ -61,6 +71,17 @@ instance_type = "standard-1"
 # Additional settings.
 # ACCESS_TEAM_DOMAIN = "<your-team>.cloudflareaccess.com"
 # ACCESS_AUD = "<application AUD tag>"
+# R2 durability (optional — all four required to enable):
+#   HERMES_R2_ENDPOINT      S3 endpoint, e.g. https://<account-id>.r2.cloudflarestorage.com
+#   BACKUP_BUCKET_NAME      R2 bucket holding memories/ + backups/
+#   CLOUDFLARE_ACCOUNT_ID   Account id — used by the Worker for presigned backup
+#                          uploads (a Worker var, distinct from the CLI's shell
+#                          env var; keep the real value in wrangler.local.toml)
+#   HERMES_BACKUP_INTERVAL_SEC  Post-chat backup debounce (default 900)
+# HERMES_R2_ENDPOINT = ""
+# BACKUP_BUCKET_NAME = ""
+# CLOUDFLARE_ACCOUNT_ID = ""
+# HERMES_BACKUP_INTERVAL_SEC = "900"
 
 # ─── Secrets (set with `npm run secret -- put <NAME>`) ──────────────
 # Values never live in this file or in git — they are stored encrypted on
@@ -70,13 +91,19 @@ instance_type = "standard-1"
 #   OPENAI_API_KEY       OpenAI (GPT models)
 #
 # Optional:
-#   API_TOKEN            Bearer token required on /api/* requests (recommended in production).
+#   API_TOKEN            Bearer token required on /api/* and /v1/* — fail-closed:
+#                        endpoints return 503 while it is unset.
 #                        Generate one with: `openssl rand -hex 32`
+#   ALLOW_UNAUTHENTICATED  Set to 'true' to serve without API_TOKEN (local dev ONLY).
 #   HERMES_GATEWAY_TOKEN Bearer token between the Worker and the Hermes API server
 #   HERMES_DEFAULT_MODEL Override Hermes' default model id, e.g. `anthropic/claude-sonnet-4-5`
 #   TELEGRAM_BOT_TOKEN   Enables the Telegram platform (bot comes online at boot).
 #   TELEGRAM_ALLOWED_USERS  Comma-separated Telegram user ids allowed to use the bot.
-#                        Strongly recommended — unset means anyone who finds the bot can use it.
+#                        Required — the bot stays offline without an allow-list.
+#   NOTION_TOKEN         Written inside the container as NOTION_API_KEY in ~/.hermes/.env.
+#   R2_ACCESS_KEY_ID      R2 API token (Access Key ID) scoped to the durability
+#                        bucket — Object Read & Write on that bucket only.
+#   R2_SECRET_ACCESS_KEY R2 API token Secret Access Key (same token).
 #   HERMES_AI_GATEWAY_URL   AI Gateway mode: route all inference through this base URL, e.g.
 #                        https://gateway.ai.cloudflare.com/v1/<account>/<gateway>/openrouter/v1
 #                        or https://api.cloudflare.com/client/v4/accounts/<account>/ai/v1

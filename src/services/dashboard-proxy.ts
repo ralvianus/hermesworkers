@@ -17,7 +17,7 @@
  * keeps serving its API routes on the workers.dev URL.
  */
 
-import { getContainer, collectProviderKeys, type Env } from '../lib/container';
+import { getContainer, collectProviderKeys, collectR2Durability, type Env } from '../lib/container';
 import { bearerFromHeader, timingSafeEqualStr } from '../lib/auth';
 import { isValidAccessJwt } from '../lib/access';
 import {
@@ -39,6 +39,16 @@ export async function maybeHandleDashboard(
   const url = new URL(request.url);
   if (url.hostname.toLowerCase() !== env.DASHBOARD_HOSTNAME.toLowerCase()) {
     return null;
+  }
+
+  // Fail closed: the dashboard fronts a GATEWAY_ALLOW_ALL_USERS Hermes, so
+  // with no credential configured it must stay unreachable. Same opt-in as
+  // the API routes.
+  if (!env.API_TOKEN && env.ALLOW_UNAUTHENTICATED !== 'true') {
+    return new Response(
+      'API_TOKEN is not configured — the dashboard is disabled. Set it with `npm run secret -- put API_TOKEN`.',
+      { status: 503 },
+    );
   }
 
   // Browser login for the token gate: shows a minimal form and, on a valid
@@ -78,6 +88,12 @@ export async function maybeHandleDashboard(
         return new Response('Unauthorized', { status: 401 });
       }
     }
+  } else {
+    // API_TOKEN unset with ALLOW_UNAUTHENTICATED=true — explicitly opted-in
+    // open mode. Loud warning: the dashboard fronts the full Hermes session.
+    console.warn(
+      '[dashboard] API_TOKEN is not set — the dashboard is PUBLIC (ALLOW_UNAUTHENTICATED).',
+    );
   }
 
   const container = getContainer(env);
@@ -86,6 +102,7 @@ export async function maybeHandleDashboard(
       providerKeys: collectProviderKeys(env),
       gatewayToken: env.HERMES_GATEWAY_TOKEN,
       defaultModel: env.HERMES_DEFAULT_MODEL,
+      r2: collectR2Durability(env),
     });
   } catch (err) {
     return new Response(

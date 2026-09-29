@@ -11,10 +11,13 @@ ANTHROPIC_API_KEY=""
 OPENROUTER_API_KEY=""
 OPENAI_API_KEY=""
 
-# ── Worker auth (strongly recommended) ──────────────────────────────
+# ── Worker auth (required — endpoints fail closed without it) ──────
 # Bearer token required on /v1/* and /api/* when set.
 # Generate: openssl rand -hex 32
 API_TOKEN=""
+
+# Local dev ONLY: set to 'true' to serve without API_TOKEN entirely.
+# ALLOW_UNAUTHENTICATED=""
 
 # Bearer token between the Worker and the Hermes API server inside the
 # container. Generate: openssl rand -hex 32
@@ -46,4 +49,18 @@ HERMES_GATEWAY_TOKEN=""
 # Bot comes online at gateway boot when the token is set.
 # TELEGRAM_BOT_TOKEN=""
 # Comma-separated numeric Telegram user ids allowed to talk to the bot.
+# Required when TELEGRAM_BOT_TOKEN is set — the bot stays offline without it.
 # TELEGRAM_ALLOWED_USERS=""
+
+# ── Notion integration (optional) ────────────────────────────────────
+# Passed to the container as NOTION_API_KEY in ~/.hermes/.env.
+# NOTION_TOKEN=""
+
+# ── R2 state durability (optional) ──────────────────────────────────
+# Production: push an R2 API token (bucket-scoped, Object Read & Write):
+#   npm run secret -- put R2_ACCESS_KEY_ID
+#   npm run secret -- put R2_SECRET_ACCESS_KEY
+# Local dev does NOT need credentials — the mount and backups use the
+# local R2 simulation via the BACKUP_BUCKET binding (see wrangler.toml).
+# R2_ACCESS_KEY_ID=""
+# R2_SECRET_ACCESS_KEY=""

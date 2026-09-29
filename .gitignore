@@ -6,6 +6,9 @@ node_modules/
 .dev.vars
 wrangler.local.toml
 
+# Local agent instructions (not shared)
+AGENTS.md
+
 # Build output
 dist/
 *.tsbuildinfo

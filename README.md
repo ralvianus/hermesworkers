@@ -24,8 +24,9 @@ You get a personal Hermes that:
 - **sleeps when idle** (Sandbox suspends the container after 4 hours of inactivity),
 - **wakes on demand** when the next chat request arrives,
 - **survives sleep** with Hermes session/cron state preserved under `~/.hermes/` inside the container,
+- **(optionally) survives instance replacement** — with R2 durability enabled, memory lives in a bucket mount and `~/.hermes` is periodically snapshotted and restored automatically (see "Durable state"),
 - **runs anywhere Cloudflare runs** (no VPS, no Docker daemon on your machine),
-- **optionally runs as a Telegram bot** (`TELEGRAM_BOT_TOKEN` brings the bot online at gateway boot, gated by `TELEGRAM_ALLOWED_USERS`).
+- **optionally runs as a Telegram bot** — enabled only when both `TELEGRAM_BOT_TOKEN` and a `TELEGRAM_ALLOWED_USERS` allow-list are set (the bot stays offline without the allow-list).
 
 ## Requirements
 
@@ -55,7 +56,7 @@ The Sandbox container scales to zero after `sleepAfter` (default 4 hours). A sle
 ```
             ┌──────────────────────────────────────────────────────┐
   request   │ Cloudflare Worker  ( src/index.ts )                  │
- ─────────► │   ├─ /api/health, /v1/chat/completions, /api/...     │
+  ─────────► │   ├─ /api/health, /v1/chat/completions, /api/...     │
             │   └─ optional dashboard hostname proxy               │
             └─────────┬────────────────────────────┬───────────────┘
                       │ Sandbox SDK                │
@@ -66,10 +67,17 @@ The Sandbox container scales to zero after `sleepAfter` (default 4 hours). A sle
             │   └─ Cloudflare Sandbox container                    │
             │        ├─ port 18789 → Hermes API server             │
             │        └─ port 9119  → Hermes native dashboard (web) │
+            └──────────────┬───────────────────────────────────────┘
+                           │ s3fs mount + squashfs snapshots (optional)
+                           ▼
+            ┌──────────────────────────────────────────────────────┐
+            │ R2 bucket (e.g. hermes-data)                        │
+            │   ├─ memories/  ← mounted at ~/.hermes/memories     │
+            │   └─ backups/   ← ~/.hermes snapshots (2 generations)│
             └──────────────────────────────────────────────────────┘
 ```
 
-The Worker is stateless. All Hermes state (sessions, crons, cached skills) lives inside `~/.hermes/` in the container and is preserved across sleeps by Cloudflare Sandbox's snapshot behaviour.
+The Worker is stateless. All Hermes state (sessions, crons, cached skills) lives inside `~/.hermes/` in the container and is preserved across sleeps by Cloudflare Sandbox's snapshot behaviour. What the snapshot does **not** cover is an instance replacement (image rollout, failure, deletion) — that is what the optional R2 durability layer below adds.
 
 ## Quick start
 
@@ -95,7 +103,8 @@ export CLOUDFLARE_ACCOUNT_ID="<your-account-id>"
 # 5. Push at least one provider API key as a secret
 npm run secret -- put ANTHROPIC_API_KEY     # or OPENROUTER_API_KEY / OPENAI_API_KEY
 
-# 6. (Recommended) Push a Worker-side bearer token to gate the API.
+# 6. Push a Worker-side bearer token to gate the API (required — without it
+#    every /v1/* and /api/* request is rejected with 503).
 #    Generate one with: openssl rand -hex 32
 npm run secret -- put API_TOKEN
 
@@ -137,10 +146,11 @@ The first request triggers a cold start — expect 15–60 seconds. Subsequent r
 | POST   | `/api/instance/restart`           | Hard restart (kills PID 1, Cloudflare respawns the image)    |
 | POST   | `/api/instance/restart-gateway`   | Graceful Hermes process restart (re-reads BYOK secrets)      |
 | POST   | `/api/instance/stop`              | Stop the Hermes processes (container stays alive)            |
+| POST   | `/api/instance/backup`           | Force an immediate `~/.hermes` snapshot into R2 (requires R2 durability) |
 | GET    | `/api/instance/logs`              | Dump process list, Hermes config, server log tail            |
 | GET/POST | `/dashboard-login`              | Token login form for the dashboard hostname (sets the `hw_token` cookie) |
 
-All `/v1/*` and `/api/*` paths are gated by `API_TOKEN` if you set it.
+All `/v1/*` and `/api/*` paths require `API_TOKEN`; while it is unset they return `503 api_token_not_set` unless the deployment sets `ALLOW_UNAUTHENTICATED=true` (local dev only).
 
 ## Native dashboard (optional)
 
@@ -163,7 +173,7 @@ Hermes ships a built-in web dashboard (sessions, analytics, models, crons, skill
    npm run deploy
    ```
 
-Visiting `https://hermes.example.com` now proxies straight to the Hermes native UI inside the container. WebSocket upgrades work transparently. If `API_TOKEN` is set, the dashboard hostname requires a credential — in order of preference:
+Visiting `https://hermes.example.com` now proxies straight to the Hermes native UI inside the container. WebSocket upgrades work transparently. The dashboard requires `API_TOKEN` — it returns 503 while the token is unset (same fail-closed rule as the API). With a token configured, credentials are accepted in order of preference:
 
 1. **Zero Trust SSO** — if the hostname is fronted by a Cloudflare Access application, set `ACCESS_TEAM_DOMAIN` / `ACCESS_AUD` (see [custom-domain.md](docs/custom-domain.md)); the Worker validates the Access JWT and your SSO login is the credential.
 2. **Login page** — browsers without an Access session get redirected to `/dashboard-login`, which sets an HttpOnly `hw_token` cookie (30 days) after verifying the token.
@@ -200,7 +210,32 @@ This Worker does **not** boot the container at deploy time. The first chat (or `
 4. Launches the native dashboard on port 9119 in the background.
 5. Execs `hermes gateway` in the foreground.
 
-`POST /api/instance/restart` kills PID 1; Cloudflare respawns the container from the latest image (useful after `wrangler deploy`). `POST /api/instance/restart-gateway` only kills the Hermes processes; the container stays alive and re-reads `~/.hermes/.env` on the next boot.
+`POST /api/instance/restart` kills PID 1 and Cloudflare respawns the container; in current platform behaviour the snapshot is preserved, so state survives (verified live). What *does* start from an empty disk is an **instance replacement** — triggered by a deploy that changes the container image (Dockerfile change) or a platform-side failure. With R2 durability enabled that case is covered by the restore path below. `POST /api/instance/restart-gateway` only kills the Hermes processes; the container stays alive and re-reads `~/.hermes/.env` on the next boot.
+
+## Durable state (R2, optional)
+
+Hermes state inside the container survives **sleep/wake** via the Sandbox snapshot of `/home`, but a container **instance replacement** (image rollout, failure, deletion) starts with an empty disk — memory, sessions and skills would be lost. R2 durability fixes that (full design: [`docs/plans/r2-durability-plan.md`](docs/plans/r2-durability-plan.md)):
+
+1. **Memory, live** — `MEMORY.md` / `USER.md` are s3fs-mounted from `hermes-data/memories/` at `~/.hermes/memories`. Writes are durable instantly. The mount is health-probed on every request; a wedged mount (stale connections after wake) is remounted, and a failed mount fails closed (503) so memory never silently lands on ephemeral disk. Enabling durability on an existing deployment is safe: local memory files are staged before the first mount and seeded into the bucket only when it lacks them.
+2. **Sessions + skills + config, snapshotted** — after successful chats (debounced via `HERMES_BACKUP_INTERVAL_SEC`, default 15 min) and via `POST /api/instance/backup`, `~/.hermes` is archived (squashfs) into `hermes-data/backups/`. `.env` is excluded — secrets never leave the Worker secret store. Two generations are kept; a corrupt latest falls back to the previous one.
+3. **Restore on replacement** — when a fresh instance boots with no `state.db` and a backup exists, the Worker restores `~/.hermes` from the latest snapshot before starting Hermes (the archive is extracted as real files, not a sleep-vanishing overlay). Sleep/wake cycles need no restore (the snapshot covers them), and neither does `POST /api/instance/restart` (snapshot preserved).
+
+Setup:
+
+```bash
+# 1. R2 API token scoped to the bucket ONLY, Object Read & Write
+#    (dashboard → R2 → Manage R2 API Tokens), then:
+npm run secret -- put R2_ACCESS_KEY_ID
+npm run secret -- put R2_SECRET_ACCESS_KEY
+
+# 2. In wrangler.local.toml (see the commented template in wrangler.toml):
+#    [[r2_buckets]] binding = "BACKUP_BUCKET", bucket_name = "hermes-data"
+#    [vars] HERMES_R2_ENDPOINT / BACKUP_BUCKET_NAME / CLOUDFLARE_ACCOUNT_ID
+
+# 3. Deploy, take the first backup, then verify:
+npm run deploy
+curl -X POST "$WORKER_URL/api/instance/backup" -H "Authorization: Bearer $TOKEN"
+```
 
 ## All secrets reference
 
@@ -209,21 +244,30 @@ This Worker does **not** boot the container at deploy time. The first chat (or `
 | `ANTHROPIC_API_KEY`        | ¹        | Anthropic API key — written to `~/.hermes/.env`                                           |
 | `OPENROUTER_API_KEY`       | ¹        | OpenRouter API key — written to `~/.hermes/.env`                                          |
 | `OPENAI_API_KEY`           | ¹        | OpenAI API key — written to `~/.hermes/.env`                                              |
-| `API_TOKEN`                | No       | Bearer token required on `/v1/*` and `/api/*` (recommended in production)                 |
+| `API_TOKEN`                | Yes²     | Bearer token required on `/v1/*` and `/api/*` — fail-closed: endpoints return 503 while it is unset |
+| `ALLOW_UNAUTHENTICATED`     | No       | Set to `true` to serve without `API_TOKEN` (local dev only — never in production)           |
 | `HERMES_GATEWAY_TOKEN`     | No       | Bearer token between the Worker and the Hermes API server — if unset, the container generates a random one-time token at boot and Worker requests are rejected until it is set |
 | `HERMES_DEFAULT_MODEL`     | No       | Default model id (e.g. `anthropic/claude-sonnet-4-5`; in AI Gateway mode it must match the gateway's upstream) |
 | `DASHBOARD_HOSTNAME`       | No       | Hostname proxied to the Hermes native dashboard (see "Native dashboard")                  |
 | `ACCESS_TEAM_DOMAIN`       | No       | Zero Trust team domain (e.g. `myteam.cloudflareaccess.com`) — enables Access SSO as the dashboard credential |
 | `ACCESS_AUD`               | No       | AUD tag of the Access application in front of `DASHBOARD_HOSTNAME` (Zero Trust → Applications → Additional settings) |
 | `TELEGRAM_BOT_TOKEN`       | No       | Enables the Telegram platform — bot comes online at gateway boot                           |
-| `TELEGRAM_ALLOWED_USERS`   | No       | Comma-separated Telegram user ids allowed to use the bot (recommended; unset = public bot) |
+| `TELEGRAM_ALLOWED_USERS`   | Yes³     | Comma-separated Telegram user ids allowed to use the bot — the bot stays offline without it |
+| `NOTION_TOKEN`             | No       | Notion integration token — written to `~/.hermes/.env` as `NOTION_API_KEY` at gateway boot |
+| `R2_ACCESS_KEY_ID`         | No⁴      | R2 API token Access Key (Object Read & Write on the durability bucket only) — memory mount + backup uploads |
+| `R2_SECRET_ACCESS_KEY`     | No⁴      | R2 API token Secret Access Key (same token) |
 | `HERMES_AI_GATEWAY_URL`    | No       | AI Gateway mode: base URL all inference routes through (see byok-setup.md)                 |
 | `HERMES_INFERENCE_TOKEN`   | No       | Bearer token for the AI Gateway (provider key or Cloudflare API token)                     |
 | `HERMES_AI_GATEWAY_ID`     | No       | Gateway id sent as `cf-aig-gateway-id` — required for `@cf/...` models (falls back to `default`) |
 
 ¹ At least one of the three provider keys is required.
+² Required in every real deployment; opt out explicitly with `ALLOW_UNAUTHENTICATED=true` for local dev only.
+³ Required when `TELEGRAM_BOT_TOKEN` is set — the Telegram platform is disabled without an allow-list.
+⁴ Both R2 secrets (plus the `HERMES_R2_ENDPOINT` / `BACKUP_BUCKET_NAME` / `CLOUDFLARE_ACCOUNT_ID` vars and the `BACKUP_BUCKET` binding) are required to enable R2 durability; when unset the feature is off and chat works exactly as before.
 
 Push secrets with `npm run secret -- put <NAME>` (shorthand for `wrangler secret put … -c wrangler.local.toml`). Plain config values (like `DASHBOARD_HOSTNAME` and `ACCESS_TEAM_DOMAIN`) also live under `[vars]` — in `wrangler.local.toml` for real deployments, never in the committed template.
+
+For Notion, set `NOTION_TOKEN` in `.dev.vars` for local development, or push it with `npm run secret -- put NOTION_TOKEN` for a deployed Worker. The next gateway boot (or `POST /api/instance/restart-gateway`) writes it to the container's `~/.hermes/.env` under the name `NOTION_API_KEY`.
 
 ### Local development secrets
 
@@ -252,7 +296,8 @@ Neither committed file intentionally contains an `account_id` or real hostname; 
 
 ## Security considerations
 
-- **Set `API_TOKEN`.** Without it, anyone who finds your `*.workers.dev` URL can talk to your Hermes (and bill your provider key). The Worker logs a warning on every unauthenticated request while it is unset. The token is a single shared secret — rotate it with `npm run secret -- put API_TOKEN` followed by `POST /api/instance/restart` if you suspect compromise. Comparison is constant-time.
+- **The Worker fails closed.** With `API_TOKEN` unset, every `/v1/*` and `/api/*` request and the dashboard hostname return `503 api_token_not_set`. Traffic is only served without a token when you explicitly set `ALLOW_UNAUTHENTICATED=true` — keep that var out of production. The token is a single shared secret — rotate it with `npm run secret -- put API_TOKEN` followed by `POST /api/instance/restart` if you suspect compromise. Comparison is constant-time.
+- **The Telegram bot requires an allow-list.** `TELEGRAM_ALLOWED_USERS` gates who can talk to the agent; with the allow-list empty the Telegram platform stays offline at boot instead of accepting anyone who finds the bot.
 - **Token-gated endpoints never echo secrets.** `GET /api/instance/logs` redacts values of keys matching `*_API_KEY` / `*_TOKEN` / `*_SECRET` / `*_KEY` / `*_PASSWORD` in all returned output.
 - **The container is single-tenant.** Anyone who can reach `/v1/chat/completions` reaches the same Hermes session/state. If you need multi-user separation, run multiple deployments.
 - **Hermes' API server runs with `GATEWAY_ALLOW_ALL_USERS=true`** so the Worker proxy can reach it. The Worker is the only gate — keep `API_TOKEN` set in production.
@@ -279,7 +324,16 @@ Confirm: (1) the hostname is set in `wrangler.local.toml`, (2) the Worker route 
 The token shape must match the URL mode: a provider key for `gateway.ai.cloudflare.com` pass-through, a Cloudflare API token (Account → Workers AI → Read) for the `/ai/v1` REST API. Verify with `GET /api/instance/logs`, then `POST /api/instance/restart-gateway`.
 
 **The Telegram bot doesn't come online.**
-Check `GET /api/instance/logs` that `TELEGRAM_BOT_TOKEN set: yes` appears in the boot output; if the secret was added after boot, call `POST /api/instance/restart-gateway`. Without `TELEGRAM_ALLOWED_USERS`, anyone who finds the bot can use it — set the allow-list.
+First check that both `TELEGRAM_BOT_TOKEN` and `TELEGRAM_ALLOWED_USERS` are set — the bot is disabled at boot without an allow-list (the boot log in `GET /api/instance/logs` says so). If a secret was added after boot, call `POST /api/instance/restart-gateway`.
+
+**Chats return 503 with an R2 memories mount error.**
+The mount is fail-closed: chat is blocked rather than letting memory writes land on ephemeral disk. Check the R2 API token (scope = the bucket only, Object Read & Write), the `HERMES_R2_ENDPOINT` value, and that the bucket name matches `BACKUP_BUCKET_NAME`. `GET /api/instance/logs` shows the mount error detail.
+
+**`POST /api/instance/backup` returns 400 `r2_durability_not_configured`.**
+R2 durability is opt-in. All of `HERMES_R2_ENDPOINT`, `BACKUP_BUCKET_NAME`, `CLOUDFLARE_ACCOUNT_ID` ([vars]) plus `R2_ACCESS_KEY_ID` / `R2_SECRET_ACCESS_KEY` (secrets) and the `BACKUP_BUCKET` binding must be set — see "Durable state (R2, optional)".
+
+**Hermes "forgot" everything after an instance replacement.**
+Restores run only when a backup exists (check `POST /api/instance/backup` once after enabling) and `state.db` is missing at cold boot. If both generations failed to restore, chat fails closed with a restore error in `GET /api/instance/logs` — fix the mount/token issue and retry before chatting, or the next backup could persist an empty home over the last good one.
 
 ## Known issues
 

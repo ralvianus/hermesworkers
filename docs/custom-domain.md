@@ -58,7 +58,7 @@ curl -I https://hermes.example.com/ \
 
 You should get back the Hermes dashboard HTML (HTTP 200, `content-type: text/html`). Visiting the URL in a browser shows the dashboard with the sidebar (Sessions, Analytics, Models, Cron, Skills, etc.).
 
-If `API_TOKEN` is set, the dashboard hostname requires a credential. Three are accepted:
+The dashboard hostname requires a credential — while `API_TOKEN` is unset it returns 503 (fail-closed, same as the API routes). With a token configured, three credentials are accepted:
 
 - **Zero Trust SSO (recommended):** if the hostname is fronted by a Cloudflare Access application, set `ACCESS_TEAM_DOMAIN` and `ACCESS_AUD` in `wrangler.local.toml` `[vars]`. The Worker validates the `Cf-Access-Jwt-Assertion` the edge injects after SSO — the browser flow is simply: open the URL, authenticate to Access, done. Nothing to paste or save.
 - **Login page (fallback):** open `https://hermes.example.com/dashboard-login`, paste the token, and sign in. This sets an `HttpOnly` `hw_token` cookie (30 days) and redirects to the dashboard. Browsers that fail the gate are redirected here automatically.

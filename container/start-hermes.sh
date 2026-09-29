@@ -20,6 +20,7 @@ echo "OPENROUTER_API_KEY set: ${OPENROUTER_API_KEY:+yes}" >&2
 echo "OPENAI_API_KEY set: ${OPENAI_API_KEY:+yes}" >&2
 echo "HERMES_GATEWAY_TOKEN set: ${HERMES_GATEWAY_TOKEN:+yes}" >&2
 echo "TELEGRAM_BOT_TOKEN set: ${TELEGRAM_BOT_TOKEN:+yes}" >&2
+echo "TELEGRAM_ALLOWED_USERS set: ${TELEGRAM_ALLOWED_USERS:+yes}" >&2
 echo "AI Gateway mode: ${HERMES_AI_GATEWAY_URL:+enabled}" >&2
 echo "HOME: ${HOME:-/home/hermes}" >&2
 
@@ -35,12 +36,14 @@ mkdir -p "$HOME_DIR/.hermes"
 # Configure the Hermes API server before launching the gateway.
 # We bind to 18789 (not Hermes' default 8642) so the Worker has a stable target port.
 # If HERMES_GATEWAY_TOKEN is unset (local dev without the Worker), generate a
-# random one instead of shipping a predictable default. It is printed to stderr
-# and the log so a local dev can pick it up; Worker-driven boots always set it.
+# random one instead of shipping a predictable default. It is written to the
+# container log file (NOT stderr — the Worker surfaces stderr in 503 error
+# bodies and must never see the token value); a local dev picks it up from
+# /tmp/hermes-server.log. Worker-driven boots always set it.
 if [ -z "$HERMES_GATEWAY_TOKEN" ]; then
     HERMES_GATEWAY_TOKEN="$(head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n')"
-    echo "WARNING: HERMES_GATEWAY_TOKEN not set — generated a random one-time token (see below). Worker requests without the matching secret will be rejected." >&2
-    echo "Generated HERMES_GATEWAY_TOKEN: $HERMES_GATEWAY_TOKEN" >&2
+    echo "WARNING: HERMES_GATEWAY_TOKEN not set — generated a random one-time token (see /tmp/hermes-server.log). Worker requests without the matching secret will be rejected." >&2
+    echo "Generated HERMES_GATEWAY_TOKEN: $HERMES_GATEWAY_TOKEN" >> "$LOG_FILE"
 fi
 hermes config set API_SERVER_ENABLED true
 hermes config set API_SERVER_KEY "$HERMES_GATEWAY_TOKEN"
@@ -63,12 +66,18 @@ else
     { [ -n "$OPENROUTER_API_KEY" ] && echo "OPENROUTER_API_KEY=$OPENROUTER_API_KEY" >> "$HERMES_ENV_FILE"; } || true
     { [ -n "$OPENAI_API_KEY" ] && echo "OPENAI_API_KEY=$OPENAI_API_KEY" >> "$HERMES_ENV_FILE"; } || true
 fi
-# Telegram platform: the bot comes online automatically when the token is
-# present. TELEGRAM_ALLOWED_USERS (comma-separated numeric user ids) gates
-# who can talk to the agent — leave it unset and anyone who finds the bot
-# can drive it (and spend your provider credits).
-{ [ -n "$TELEGRAM_BOT_TOKEN" ] && echo "TELEGRAM_BOT_TOKEN=$TELEGRAM_BOT_TOKEN" >> "$HERMES_ENV_FILE"; } || true
-{ [ -n "$TELEGRAM_ALLOWED_USERS" ] && echo "TELEGRAM_ALLOWED_USERS=$TELEGRAM_ALLOWED_USERS" >> "$HERMES_ENV_FILE"; } || true
+# Hermes' Notion integration reads NOTION_API_KEY from ~/.hermes/.env.
+{ [ -n "$NOTION_TOKEN" ] && printf 'NOTION_API_KEY=%s\n' "$NOTION_TOKEN" >> "$HERMES_ENV_FILE"; } || true
+# Telegram platform: the bot comes online only when BOTH the token and an
+# allow-list are present. Without TELEGRAM_ALLOWED_USERS the bot is disabled
+# at boot — anyone who finds an unlisted bot can drive it (and spend your
+# provider credits), so an empty allow-list must not mean "public".
+if [ -n "$TELEGRAM_BOT_TOKEN" ] && [ -n "$TELEGRAM_ALLOWED_USERS" ]; then
+    echo "TELEGRAM_BOT_TOKEN=$TELEGRAM_BOT_TOKEN" >> "$HERMES_ENV_FILE"
+    echo "TELEGRAM_ALLOWED_USERS=$TELEGRAM_ALLOWED_USERS" >> "$HERMES_ENV_FILE"
+elif [ -n "$TELEGRAM_BOT_TOKEN" ]; then
+    echo "WARNING: TELEGRAM_BOT_TOKEN is set but TELEGRAM_ALLOWED_USERS is empty — Telegram bot DISABLED. Set TELEGRAM_ALLOWED_USERS (comma-separated numeric Telegram user ids) to enable it." >&2
+fi
 chmod 600 "$HERMES_ENV_FILE"
 echo "[startup] wrote $HERMES_ENV_FILE ($(wc -l < "$HERMES_ENV_FILE") lines)" >> "$LOG_FILE"
 

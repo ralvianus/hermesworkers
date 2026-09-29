@@ -2,6 +2,7 @@ FROM docker.io/cloudflare/sandbox:0.7.20
 LABEL org.opencontainers.image.title="hermesworkers"
 LABEL org.opencontainers.image.description="Hermes Agent running inside Cloudflare Sandbox"
 LABEL org.opencontainers.image.licenses="Apache-2.0"
+LABEL org.opencontainers.image.version="r2-durability-1"
 
 # System dependencies required by Hermes:
 # - python 3.11+ (Hermes core), node 22 (Hermes install scripts), git

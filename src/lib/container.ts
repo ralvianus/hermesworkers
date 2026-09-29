@@ -23,6 +23,9 @@ export interface Env {
   OPENAI_API_KEY?: string;
 
   API_TOKEN?: string;
+  // Explicit opt-out of the fail-closed default: when 'true', /api/*, /v1/*
+  // and the dashboard are served with no credential (local dev only).
+  ALLOW_UNAUTHENTICATED?: string;
   HERMES_GATEWAY_TOKEN?: string;
   HERMES_DEFAULT_MODEL?: string;
   DASHBOARD_HOSTNAME?: string;
@@ -31,6 +34,22 @@ export interface Env {
 
   TELEGRAM_BOT_TOKEN?: string;
   TELEGRAM_ALLOWED_USERS?: string;
+  NOTION_TOKEN?: string;
+
+  // ── R2 state durability (optional) ────────────────────────────────
+  // Enabled when all of: HERMES_R2_ENDPOINT + BACKUP_BUCKET_NAME +
+  // CLOUDFLARE_ACCOUNT_ID vars, R2_ACCESS_KEY_ID / R2_SECRET_ACCESS_KEY
+  // secrets, and the BACKUP_BUCKET R2 binding (name required by the Sandbox
+  // SDK's backup API) are set. Memories are s3fs-mounted from the bucket;
+  // ~/.hermes is periodically snapshotted into it.
+  // See docs/plans/r2-durability-plan.md.
+  BACKUP_BUCKET?: R2Bucket;
+  HERMES_R2_ENDPOINT?: string;
+  BACKUP_BUCKET_NAME?: string;
+  CLOUDFLARE_ACCOUNT_ID?: string;
+  HERMES_BACKUP_INTERVAL_SEC?: string;
+  R2_ACCESS_KEY_ID?: string;
+  R2_SECRET_ACCESS_KEY?: string;
 
   // AI Gateway mode: when set, all inference routes through this base URL
   // (Cloudflare AI Gateway) instead of direct providers. Model ids must match
@@ -56,7 +75,7 @@ export function getContainer(env: Env): DurableObjectStub<HermesInstance> {
 
 /**
  * Collect the env vars that must land in the container's ~/.hermes/.env:
- * BYOK provider keys plus optional gateway platform config (Telegram).
+ * BYOK provider keys plus optional gateway platform config (Telegram, Notion).
  * The startup script materialises .env from scratch on every boot, so
  * every gateway-visible variable has to be injected through here.
  */
@@ -67,8 +86,74 @@ export function collectProviderKeys(env: Env): Record<string, string> {
   if (env.OPENAI_API_KEY) keys.OPENAI_API_KEY = env.OPENAI_API_KEY;
   if (env.TELEGRAM_BOT_TOKEN) keys.TELEGRAM_BOT_TOKEN = env.TELEGRAM_BOT_TOKEN;
   if (env.TELEGRAM_ALLOWED_USERS) keys.TELEGRAM_ALLOWED_USERS = env.TELEGRAM_ALLOWED_USERS;
+  if (env.NOTION_TOKEN) keys.NOTION_TOKEN = env.NOTION_TOKEN;
   if (env.HERMES_AI_GATEWAY_URL) keys.HERMES_AI_GATEWAY_URL = env.HERMES_AI_GATEWAY_URL;
   if (env.HERMES_INFERENCE_TOKEN) keys.HERMES_INFERENCE_TOKEN = env.HERMES_INFERENCE_TOKEN;
   if (env.HERMES_AI_GATEWAY_ID) keys.HERMES_AI_GATEWAY_ID = env.HERMES_AI_GATEWAY_ID;
   return keys;
+}
+
+/**
+ * R2 durability configuration, resolved from the Worker bindings/secrets.
+ * Returns undefined (feature off) unless every required piece is present —
+ * deployments that have not opted in keep working exactly as before.
+ */
+export interface R2Durability {
+  /** S3 endpoint, e.g. https://<account-id>.r2.cloudflarestorage.com */
+  endpoint: string;
+  /** Bucket that holds memories/ + backups/ */
+  bucketName: string;
+  accessKeyId: string;
+  secretAccessKey: string;
+  /** R2 binding handle (BACKUP_BUCKET) — used for pruning retired backup
+   *  objects and for local-dev localBucket mounts. */
+  bucket?: R2Bucket;
+  /** Post-chat backup debounce, seconds (default 900 = 15 min). */
+  backupIntervalSec: number;
+}
+
+/** R2 S3 endpoints — plain or jurisdiction-specific (e.g. .eu.). */
+const R2_ENDPOINT_RE = /^https:\/\/[a-z0-9-]+(\.eu)?\.r2\.cloudflarestorage\.com\/?$/i;
+
+export function collectR2Durability(env: Env): R2Durability | undefined {
+  const configured =
+    !!env.HERMES_R2_ENDPOINT &&
+    !!env.BACKUP_BUCKET_NAME &&
+    !!env.CLOUDFLARE_ACCOUNT_ID &&
+    !!env.R2_ACCESS_KEY_ID &&
+    !!env.R2_SECRET_ACCESS_KEY;
+  if (!configured || !env.BACKUP_BUCKET) {
+    // Warn when ANY piece is present but the feature can't engage, so a
+    // half-configured deployment is visible in logs instead of silently off.
+    const partial =
+      env.HERMES_R2_ENDPOINT ||
+      env.BACKUP_BUCKET_NAME ||
+      env.CLOUDFLARE_ACCOUNT_ID ||
+      env.R2_ACCESS_KEY_ID ||
+      env.R2_SECRET_ACCESS_KEY;
+    if (partial) {
+      console.warn(
+        '[r2] R2 durability config is incomplete — memory mount + backups ' +
+          'disabled. Check HERMES_R2_ENDPOINT, BACKUP_BUCKET_NAME, CLOUDFLARE_ACCOUNT_ID, ' +
+          'R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY and the BACKUP_BUCKET binding.',
+      );
+    }
+    return undefined;
+  }
+  // The endpoint receives the R2 token credentials in the S3 auth exchange —
+  // refuse anything that is not a real R2 S3 endpoint.
+  if (!R2_ENDPOINT_RE.test(env.HERMES_R2_ENDPOINT!)) {
+    console.warn(
+      '[r2] HERMES_R2_ENDPOINT is not a valid R2 S3 endpoint — R2 durability disabled.',
+    );
+    return undefined;
+  }
+  return {
+    endpoint: env.HERMES_R2_ENDPOINT!,
+    bucketName: env.BACKUP_BUCKET_NAME!,
+    accessKeyId: env.R2_ACCESS_KEY_ID!,
+    secretAccessKey: env.R2_SECRET_ACCESS_KEY!,
+    bucket: env.BACKUP_BUCKET,
+    backupIntervalSec: Number(env.HERMES_BACKUP_INTERVAL_SEC ?? '900') || 900,
+  };
 }

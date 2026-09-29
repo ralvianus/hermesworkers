@@ -62,9 +62,9 @@ npm run secret -- put OPENAI_API_KEY
 
 Wrangler prompts you for each value; nothing is written to disk locally.
 
-## 7. (Recommended) Push a Worker bearer token
+## 7. Push a Worker bearer token (required)
 
-Without an `API_TOKEN`, anyone who finds your `*.workers.dev` URL can use your provider key on your dime. Generate a random token and add it:
+The Worker fails closed: without an `API_TOKEN`, every `/v1/*` and `/api/*` request returns `503`. Generate a random token and add it:
 
 ```bash
 openssl rand -hex 32 | npm run secret -- put API_TOKEN
