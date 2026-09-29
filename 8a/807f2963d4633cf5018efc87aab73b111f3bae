@@ -1,0 +1,21 @@
+.dev.vars.example
+  s_ea6f7304fd320c::t_3b24cd856402d5 14,19-21,52,54-66
+docs/plans/r2-durability-plan.md
+  s_ea6f7304fd320c::t_7db11195f09104 1-142
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "8a807f2963d4633cf5018efc87aab73b111f3bae",
+  "prompts": {},
+  "sessions": {
+    "s_ea6f7304fd320c": {
+      "agent_id": {
+        "tool": "opencode",
+        "id": "ses_f2916d267ffeKZouedEGeSj15r",
+        "model": "@cf/zai-org/glm-5.3"
+      },
+      "human_author": "ralvianus <ralvianus@cloudflare.com>"
+    }
+  }
+}
