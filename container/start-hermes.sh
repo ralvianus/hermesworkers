@@ -78,6 +78,17 @@ if [ -n "$TELEGRAM_BOT_TOKEN" ] && [ -n "$TELEGRAM_ALLOWED_USERS" ]; then
 elif [ -n "$TELEGRAM_BOT_TOKEN" ]; then
     echo "WARNING: TELEGRAM_BOT_TOKEN is set but TELEGRAM_ALLOWED_USERS is empty — Telegram bot DISABLED. Set TELEGRAM_ALLOWED_USERS (comma-separated numeric Telegram user ids) to enable it." >&2
 fi
+# Telegram webhook mode: with BOTH the URL and the secret present, the gateway
+# runs an HTTP webhook server on 0.0.0.0:8443 instead of long polling —
+# Telegram pushes updates to the Worker's /telegram route, which wakes this
+# container on arrival (sleep-when-idle). Hermes refuses webhook mode without
+# the secret (GHSA-3vpc-7q5r-276h), so a partial pair falls back to polling.
+if [ -n "$TELEGRAM_WEBHOOK_URL" ] && [ -n "$TELEGRAM_WEBHOOK_SECRET" ]; then
+    echo "TELEGRAM_WEBHOOK_URL=$TELEGRAM_WEBHOOK_URL" >> "$HERMES_ENV_FILE"
+    echo "TELEGRAM_WEBHOOK_SECRET=$TELEGRAM_WEBHOOK_SECRET" >> "$HERMES_ENV_FILE"
+elif [ -n "$TELEGRAM_WEBHOOK_URL" ]; then
+    echo "WARNING: TELEGRAM_WEBHOOK_URL is set but TELEGRAM_WEBHOOK_SECRET is empty — webhook mode DISABLED, falling back to long polling." >&2
+fi
 chmod 600 "$HERMES_ENV_FILE"
 echo "[startup] wrote $HERMES_ENV_FILE ($(wc -l < "$HERMES_ENV_FILE") lines)" >> "$LOG_FILE"
 

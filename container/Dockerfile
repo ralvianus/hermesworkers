@@ -74,7 +74,11 @@ WORKDIR /home/hermes
 # Two ports are exposed:
 #   18789 — Hermes API server (OpenAI-compatible /v1/chat/completions endpoint).
 #   9119  — Hermes native dashboard (web UI + WebSocket).
+# In Telegram webhook mode (TELEGRAM_WEBHOOK_URL set) the gateway also runs
+# an HTTP webhook server on:
+#   8443  — Telegram update receiver (fronted by the Worker's /telegram route).
 EXPOSE 18789
 EXPOSE 9119
+EXPOSE 8443
 
 # No CMD: the Worker starts the script through Sandbox SDK `startProcess()`.

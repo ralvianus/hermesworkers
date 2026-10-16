@@ -3,6 +3,7 @@ import type { Env } from './lib/container';
 import { bearerFromHeader, timingSafeEqualStr } from './lib/auth';
 import { chat } from './routes/chat';
 import { instance } from './routes/instance';
+import { telegram } from './routes/telegram';
 import { maybeHandleDashboard } from './services/dashboard-proxy';
 
 export { HermesInstance } from './hermesContainer';
@@ -17,6 +18,9 @@ app.use('/api/*', requireToken);
 
 app.route('/', chat);
 app.route('/', instance);
+// /telegram sits outside the /v1/* and /api/* bearer gates — it authenticates
+// with Telegram's webhook secret header instead (see routes/telegram.ts).
+app.route('/', telegram);
 
 app.get('/', (c) =>
   c.json({

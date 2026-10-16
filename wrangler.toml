@@ -71,6 +71,11 @@ instance_type = "standard-1"
 # Additional settings.
 # ACCESS_TEAM_DOMAIN = "<your-team>.cloudflareaccess.com"
 # ACCESS_AUD = "<application AUD tag>"
+# Telegram webhook mode (optional — needs the TELEGRAM_WEBHOOK_SECRET secret):
+# the public HTTPS URL where Telegram delivers bot updates. Use the
+# workers.dev hostname (a custom domain behind Access would block Telegram)
+# and keep the path matching the /telegram route in src/routes/telegram.ts.
+# TELEGRAM_WEBHOOK_URL = "https://<your-worker>.<your-subdomain>.workers.dev/telegram"
 # R2 durability (optional — all four required to enable):
 #   HERMES_R2_ENDPOINT      S3 endpoint, e.g. https://<account-id>.r2.cloudflarestorage.com
 #   BACKUP_BUCKET_NAME      R2 bucket holding memories/ + backups/
@@ -101,6 +106,11 @@ instance_type = "standard-1"
 #   TELEGRAM_ALLOWED_USERS  Comma-separated Telegram user ids allowed to use the bot.
 #                        Required — the bot stays offline without an allow-list.
 #   NOTION_TOKEN         Written inside the container as NOTION_API_KEY in ~/.hermes/.env.
+#   TELEGRAM_WEBHOOK_SECRET Telegram webhook mode: secret token Telegram echoes in
+#                        every update; verified by the Worker's /telegram route and
+#                        by Hermes (GHSA-3vpc-7q5r-276h). With it (plus the
+#                        TELEGRAM_WEBHOOK_URL var) the bot receives messages via
+#                        webhook instead of polling, waking the sleeping container.
 #   R2_ACCESS_KEY_ID      R2 API token (Access Key ID) scoped to the durability
 #                        bucket — Object Read & Write on that bucket only.
 #   R2_SECRET_ACCESS_KEY R2 API token Secret Access Key (same token).

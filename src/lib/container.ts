@@ -36,6 +36,15 @@ export interface Env {
   TELEGRAM_ALLOWED_USERS?: string;
   NOTION_TOKEN?: string;
 
+  // Telegram webhook mode (optional): when TELEGRAM_WEBHOOK_URL is set,
+  // Hermes runs an HTTP webhook server on container port 8443 instead of
+  // long polling, and Telegram pushes updates to the Worker's /telegram
+  // route — which wakes the container on arrival (sleep-when-idle).
+  // The secret is verified by BOTH the Worker route and Hermes
+  // (GHSA-3vpc-7q5r-276h) before any update is processed.
+  TELEGRAM_WEBHOOK_URL?: string;
+  TELEGRAM_WEBHOOK_SECRET?: string;
+
   // ── R2 state durability (optional) ────────────────────────────────
   // Enabled when all of: HERMES_R2_ENDPOINT + BACKUP_BUCKET_NAME +
   // CLOUDFLARE_ACCOUNT_ID vars, R2_ACCESS_KEY_ID / R2_SECRET_ACCESS_KEY
@@ -87,6 +96,8 @@ export function collectProviderKeys(env: Env): Record<string, string> {
   if (env.TELEGRAM_BOT_TOKEN) keys.TELEGRAM_BOT_TOKEN = env.TELEGRAM_BOT_TOKEN;
   if (env.TELEGRAM_ALLOWED_USERS) keys.TELEGRAM_ALLOWED_USERS = env.TELEGRAM_ALLOWED_USERS;
   if (env.NOTION_TOKEN) keys.NOTION_TOKEN = env.NOTION_TOKEN;
+  if (env.TELEGRAM_WEBHOOK_URL) keys.TELEGRAM_WEBHOOK_URL = env.TELEGRAM_WEBHOOK_URL;
+  if (env.TELEGRAM_WEBHOOK_SECRET) keys.TELEGRAM_WEBHOOK_SECRET = env.TELEGRAM_WEBHOOK_SECRET;
   if (env.HERMES_AI_GATEWAY_URL) keys.HERMES_AI_GATEWAY_URL = env.HERMES_AI_GATEWAY_URL;
   if (env.HERMES_INFERENCE_TOKEN) keys.HERMES_INFERENCE_TOKEN = env.HERMES_INFERENCE_TOKEN;
   if (env.HERMES_AI_GATEWAY_ID) keys.HERMES_AI_GATEWAY_ID = env.HERMES_AI_GATEWAY_ID;

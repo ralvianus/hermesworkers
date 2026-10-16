@@ -147,6 +147,7 @@ The first request triggers a cold start — expect 15–60 seconds. Subsequent r
 | POST   | `/api/instance/restart-gateway`   | Graceful Hermes process restart (re-reads BYOK secrets)      |
 | POST   | `/api/instance/stop`              | Stop the Hermes processes (container stays alive)            |
 | POST   | `/api/instance/backup`           | Force an immediate `~/.hermes` snapshot into R2 (requires R2 durability) |
+| POST   | `/telegram`                       | Telegram webhook receiver (webhook mode; secret-header auth) |
 | GET    | `/api/instance/logs`              | Dump process list, Hermes config, server log tail            |
 | GET/POST | `/dashboard-login`              | Token login form for the dashboard hostname (sets the `hw_token` cookie) |
 
@@ -344,6 +345,9 @@ The token shape must match the URL mode: a provider key for `gateway.ai.cloudfla
 
 **The Telegram bot doesn't come online.**
 First check that both `TELEGRAM_BOT_TOKEN` and `TELEGRAM_ALLOWED_USERS` are set — the bot is disabled at boot without an allow-list (the boot log in `GET /api/instance/logs` says so). If a secret was added after boot, call `POST /api/instance/restart-gateway`.
+
+**Telegram messages go unanswered after the container has been idle.**
+With long polling (default) the bot only receives messages while the gateway process runs — the container sleeps after ~4h idle and nothing wakes it from Telegram's side. Enable webhook mode (`TELEGRAM_WEBHOOK_URL` var + `TELEGRAM_WEBHOOK_SECRET` secret): Telegram then pushes updates to the Worker's `/telegram` route, which wakes the container on arrival. Note the container's wake does not preserve processes or `~`-state — the R2 restore rebuilds it on the first request (a few seconds to a minute for the first reply).
 
 **Chats return 503 with an R2 memories mount error.**
 The mount is fail-closed: chat is blocked rather than letting memory writes land on ephemeral disk. Check the R2 API token (scope = the bucket only, Object Read & Write), the `HERMES_R2_ENDPOINT` value, and that the bucket name matches `BACKUP_BUCKET_NAME`. `GET /api/instance/logs` shows the mount error detail.
