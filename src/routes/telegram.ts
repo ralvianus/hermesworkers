@@ -5,7 +5,7 @@ import {
   collectR2Durability,
   type Env,
 } from '../lib/container';
-import { ensureGateway } from '../services/container-lifecycle';
+import { ensureGateway, runBackup } from '../services/container-lifecycle';
 import { timingSafeEqualStr } from '../lib/auth';
 
 /**
@@ -79,6 +79,17 @@ telegram.post('/telegram', async (c) => {
   } catch (err) {
     console.error('[telegram-webhook] forward failed:', err);
     return new Response('Webhook upstream unavailable', { status: 502 });
+  }
+
+  // Telegram traffic deserves the same debounced ~/.hermes backup as the
+  // chat API — otherwise Telegram-only usage never snapshots state.
+  const r2 = collectR2Durability(c.env);
+  if (r2) {
+    c.executionCtx.waitUntil(
+      runBackup(container, r2).catch((err) =>
+        console.error('[r2-backup] post-telegram backup failed (non-fatal):', err),
+      ),
+    );
   }
 
   // Telegram only needs a 2xx; pass Hermes' status and body through.
